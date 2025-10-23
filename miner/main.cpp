@@ -26,26 +26,42 @@ Result result;
 
 void train()
 {
-    printf("%lf %lf\n", miner_portion, predictor_portion);
+    printf("=== RNNLOGIC MINER STARTING ===\n");
+    printf("Parameters: miner_portion=%.2f, predictor_portion=%.2f\n", miner_portion, predictor_portion);
+    printf("Max length: %d, Threads: %d, Iterations: %d\n", max_length, num_threads, iterations);
+    printf("Learning rate: %.4f, Temperature: %.2f\n", learning_rate, temperature);
 
+    printf("\n=== STEP 1: LOADING KNOWLEDGE GRAPH ===\n");
     KG.read_data(data_path);
     
+    printf("\n=== STEP 2: INITIALIZING RULE MINER ===\n");
     RM.init_knowledge_graph(&KG);
+    
+    printf("\n=== STEP 3: DISCOVERING RULES ===\n");
+    printf("Starting rule discovery with max_length=%d, portion=%.2f, threads=%d\n", 
+           max_length, miner_portion, num_threads);
     RM.search(max_length, miner_portion, num_threads);
     
+    printf("\n=== STEP 4: INITIALIZING PREDICTOR AND GENERATOR ===\n");
     RP.init_knowledge_graph(&KG);
     RG.init_knowledge_graph(&KG);
     RG.set_pool(RM.get_logic_rules());
 
+    printf("\n=== STEP 5: LEARNING RULE WEIGHTS ===\n");
     for (int k = 0; k != iterations; k++)
     {
+        printf("Iteration %d/%d\n", k+1, iterations);
         RG.random_from_pool(top_n);
         RP.set_logic_rules(RG.get_logic_rules());
         RP.learn(learning_rate, weight_decay, temperature, false, predictor_portion, num_threads);
         RP.H_score(top_k, 1, 0, predictor_portion, num_threads);
         RG.update(RP.get_logic_rules());
     }
+    
+    printf("\n=== STEP 6: OUTPUTTING RULES ===\n");
+    printf("Saving top %d rules to %s\n", top_n_out, output_file);
     RG.out_rules(output_file, top_n_out);
+    printf("=== MINING COMPLETE ===\n");
 }
 
 int ArgPos(char *str, int argc, char **argv)

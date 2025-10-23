@@ -1,4 +1,5 @@
 #include "rnnlogic.h"
+#include <random>
 
 double sigmoid(double x)
 {
@@ -217,6 +218,8 @@ void KnowledgeGraph::read_data(char *data_path)
     std::map<std::string, int>::iterator iter;
     FILE *fi;
     
+    printf("=== KNOWLEDGE GRAPH DATA LOADING ===\n");
+    
     strcpy(s_file, data_path);
     strcat(s_file, "/entities.dict");
     fi = fopen(s_file, "rb");
@@ -232,8 +235,14 @@ void KnowledgeGraph::read_data(char *data_path)
         ent2id[s_ent] = id;
         id2ent[id] = s_ent;
         entity_size += 1;
+        
+        // Print specific entities we're interested in
+        if (strcmp(s_ent, "person15") == 0 || strcmp(s_ent, "person55") == 0) {
+            printf("  Entity: %s -> ID: %d\n", s_ent, id);
+        }
     }
     fclose(fi);
+    printf("  Loaded %d entities\n", entity_size);
     
     strcpy(s_file, data_path);
     strcat(s_file, "/relations.dict");
@@ -250,8 +259,14 @@ void KnowledgeGraph::read_data(char *data_path)
         rel2id[s_rel] = id;
         id2rel[id] = s_rel;
         relation_size += 1;
+        
+        // Print specific relations we're interested in
+        if (strcmp(s_rel, "term7") == 0) {
+            printf("  Relation: %s -> ID: %d\n", s_rel, id);
+        }
     }
     fclose(fi);
+    printf("  Loaded %d relations\n", relation_size);
     
     strcpy(s_file, data_path);
     strcat(s_file, "/train.txt");
@@ -261,6 +276,7 @@ void KnowledgeGraph::read_data(char *data_path)
         printf("ERROR: file of train triplets not found!\n");
         exit(1);
     }
+    int triplet_count = 0;
     while (1)
     {
         if (fscanf(fi, "%s %s %s", s_head, s_rel, s_tail) != 3) break;
@@ -271,17 +287,38 @@ void KnowledgeGraph::read_data(char *data_path)
         train_triplets.push_back(triplet);
         set_train_triplets.insert(triplet);
         set_all_triplets.insert(triplet);
+        
+        // Print our specific example
+        if (strcmp(s_head, "person15") == 0 && strcmp(s_rel, "term7") == 0 && strcmp(s_tail, "person55") == 0) {
+            printf("  *** TARGET TRIPLET FOUND ***\n");
+            printf("  Triplet: %s %s %s -> (%d, %d, %d)\n", s_head, s_rel, s_tail, h, r, t);
+            printf("  This will be our concrete example for mining!\n");
+        }
+        
+        triplet_count++;
+        if (triplet_count <= 5) {
+            printf("  Sample triplet %d: %s %s %s -> (%d, %d, %d)\n", 
+                   triplet_count, s_head, s_rel, s_tail, h, r, t);
+        }
     }
     fclose(fi);
     
     train_triplet_size = int(train_triplets.size());
+    printf("  Building adjacency lists for %d training triplets...\n", train_triplet_size);
+    
     e2r2n = new std::vector<int> * [entity_size];
     for (int k = 0; k != entity_size; k++) e2r2n[k] = new std::vector<int> [relation_size];
     for (int k = 0; k != train_triplet_size; k++)
     {
         h = train_triplets[k].h; r = train_triplets[k].r; t = train_triplets[k].t;
         e2r2n[h][r].push_back(t);
+        
+        // Print adjacency for our target entity
+        if (h == ent2id["person15"]) {
+            printf("  Adjacency: person15 --%s--> %s\n", id2rel[r].c_str(), id2ent[t].c_str());
+        }
     }
+    printf("  Adjacency lists built!\n");
 
     strcpy(s_file, data_path);
     strcat(s_file, "/valid.txt");
@@ -349,6 +386,22 @@ bool KnowledgeGraph::check_true(Triplet triplet)
 
 void KnowledgeGraph::rule_search(int r, int e, int goal, int *path, int depth, int max_depth, std::set<Rule> *rule_set, Triplet removed_triplet)
 {
+    // Print detailed search progress for our target example
+    static bool trace_target = false;
+    if (e == ent2id["person15"] && goal == ent2id["person55"] && r == rel2id["term7"]) {
+        trace_target = true;
+    }
+    
+    if (trace_target && depth <= 2) {
+        printf("    [RULE_SEARCH] depth=%d, from=%s, goal=%s, path=[", 
+               depth, id2ent[e].c_str(), id2ent[goal].c_str());
+        for (int i = 0; i < depth; i++) {
+            printf("%s", id2rel[path[i]].c_str());
+            if (i < depth-1) printf(",");
+        }
+        printf("]\n");
+    }
+    
     if (e == goal)
     {
         Rule rule;
@@ -360,10 +413,23 @@ void KnowledgeGraph::rule_search(int r, int e, int goal, int *path, int depth, i
             rule.r_body.push_back(path[k]);
         }
         rule_set->insert(rule);
+        
+        if (trace_target) {
+            printf("    *** RULE FOUND *** depth=%d, head=%s, body=[", 
+                   depth, id2rel[r].c_str());
+            for (int k = 0; k != depth; k++) {
+                printf("%s", id2rel[path[k]].c_str());
+                if (k < depth-1) printf(",");
+            }
+            printf("]\n");
+        }
         return;
     }
     if (depth == max_depth)
     {
+        if (trace_target) {
+            printf("    [RULE_SEARCH] Max depth reached at %s\n", id2ent[e].c_str());
+        }
         return;
     }
 
@@ -371,10 +437,24 @@ void KnowledgeGraph::rule_search(int r, int e, int goal, int *path, int depth, i
     for (cur_r = 0; cur_r != relation_size; cur_r++)
     {
         len = int(e2r2n[e][cur_r].size());
+        if (trace_target && len > 0) {
+            printf("    [RULE_SEARCH] Exploring relation %s from %s (%d connections)\n", 
+                   id2rel[cur_r].c_str(), id2ent[e].c_str(), len);
+        }
         for (int k = 0; k != len; k++)
         {
             cur_n = e2r2n[e][cur_r][k];
-            if (e == removed_triplet.h && cur_r == removed_triplet.r && cur_n == removed_triplet.t) continue;
+            if (e == removed_triplet.h && cur_r == removed_triplet.r && cur_n == removed_triplet.t) {
+                if (trace_target) {
+                    printf("    [RULE_SEARCH] Skipping removed triplet: %s --%s--> %s\n", 
+                           id2ent[e].c_str(), id2rel[cur_r].c_str(), id2ent[cur_n].c_str());
+                }
+                continue;
+            }
+            if (trace_target) {
+                printf("    [RULE_SEARCH] Following: %s --%s--> %s\n", 
+                       id2ent[e].c_str(), id2rel[cur_r].c_str(), id2ent[cur_n].c_str());
+            }
             path[depth] = cur_r;
             rule_search(r, cur_n, goal, path, depth+1, max_depth, rule_set, removed_triplet);
         }
@@ -509,6 +589,9 @@ void RuleMiner::search_thread(int thread)
     int ed = bg + int(triplet_size / num_threads * portion);
     if (thread == num_threads - 1 && portion == 1) ed = triplet_size;
     
+    printf("=== THREAD %d STARTING ===\n", thread);
+    printf("Thread %d processing triplets %d to %d\n", thread, bg, ed-1);
+    
     std::set<Rule>::iterator iter;
     std::set<Rule> rule_set;
     std::vector<int> dests;
@@ -528,9 +611,33 @@ void RuleMiner::search_thread(int thread)
         r = p_kg->train_triplets[T].r;
         t = p_kg->train_triplets[T].t;
         
+        // Check if this is our target triplet
+        if (h == p_kg->ent2id["person15"] && r == p_kg->rel2id["term7"] && t == p_kg->ent2id["person55"]) {
+            printf("\n=== PROCESSING TARGET TRIPLET ===\n");
+            printf("Thread %d: Processing triplet (%s, %s, %s) -> (%d, %d, %d)\n", 
+                   thread, p_kg->id2ent[h].c_str(), p_kg->id2rel[r].c_str(), p_kg->id2ent[t].c_str(), h, r, t);
+            printf("Searching for paths from %s to %s with max_length=%d\n", 
+                   p_kg->id2ent[h].c_str(), p_kg->id2ent[t].c_str(), max_length);
+        }
+        
         rule_set.clear();
         p_kg->rule_search(r, h, t, path, 0, max_length, &rule_set, p_kg->train_triplets[T]);
     
+        // Check if this is our target triplet and print found rules
+        if (h == p_kg->ent2id["person15"] && r == p_kg->rel2id["term7"] && t == p_kg->ent2id["person55"]) {
+            printf("Found %d rules for target triplet:\n", (int)rule_set.size());
+            int rule_count = 0;
+            for (iter = rule_set.begin(); iter != rule_set.end(); iter++) {
+                rule_count++;
+                printf("  Rule %d: %s -> [", rule_count, p_kg->id2rel[iter->r_head].c_str());
+                for (int i = 0; i < iter->type; i++) {
+                    printf("%s", p_kg->id2rel[iter->r_body[i]].c_str());
+                    if (i < iter->type-1) printf(",");
+                }
+                printf("] (length=%d)\n", iter->type);
+            }
+        }
+        
         for (iter = rule_set.begin(); iter != rule_set.end(); iter++)
         {
             if (iter->type == 1 && iter->r_body[0] == r)
@@ -567,7 +674,7 @@ void RuleMiner::search(int _max_length, double _portion, int _num_threads)
     portion = _portion;
     num_threads = _num_threads;
 
-    std::random_shuffle((p_kg->train_triplets).begin(), (p_kg->train_triplets).end());
+    std::shuffle((p_kg->train_triplets).begin(), (p_kg->train_triplets).end(), std::default_random_engine{});
     
     pthread_t *pt = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
     for (int k = 0; k != num_threads; k++) pthread_create(&pt[k], NULL, RuleMiner::search_thread_caller, new ArgStruct(this, k));
@@ -835,7 +942,7 @@ void ReasoningPredictor::learn(double _learning_rate, double _weight_decay, doub
     total_count = 0;
     total_loss = 0;
 
-    std::random_shuffle((p_kg->train_triplets).begin(), (p_kg->train_triplets).end());
+    std::shuffle((p_kg->train_triplets).begin(), (p_kg->train_triplets).end(), std::default_random_engine{});
     
     pthread_t *pt = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
     for (int k = 0; k != num_threads; k++) pthread_create(&pt[k], NULL, ReasoningPredictor::learn_thread_caller, new ArgStruct(this, k));
@@ -1213,7 +1320,7 @@ void ReasoningPredictor::out_train(std::vector<int> *data, double _portion, int 
     for (int k = 0; k != num_threads; k++) thread_data[k].clear();
     for (int k = 0; k != num_threads; k++) thread_split[k].clear();
 
-    std::random_shuffle((p_kg->train_triplets).begin(), (p_kg->train_triplets).end());
+    std::shuffle((p_kg->train_triplets).begin(), (p_kg->train_triplets).end(), std::default_random_engine{});
     
     pthread_t *pt = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
     for (int k = 0; k != num_threads; k++) pthread_create(&pt[k], NULL, ReasoningPredictor::out_train_thread_caller, new ArgStruct(this, k));
@@ -1839,7 +1946,7 @@ void RuleGenerator::random_from_pool(int _number)
     {
         rand_index.clear();
         for (int k = 0; k != int(rel2pool[r].size()); k++) rand_index.push_back(k);
-        std::random_shuffle(rand_index.begin(), rand_index.end());
+        std::shuffle(rand_index.begin(), rand_index.end(), std::default_random_engine{});
         for (int k = 0; k != int(rel2pool[r].size()); k++)
         {
             if (k >= _number) break;

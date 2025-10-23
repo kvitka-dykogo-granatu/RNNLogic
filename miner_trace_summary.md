@@ -51,23 +51,36 @@ The algorithm explores all possible paths from person15 to person55:
 [RULE_SEARCH] Following: person103 --term0--> person23
 [RULE_SEARCH] depth=2, from=person23, goal=person55, path=[term16,term0]
 [RULE_SEARCH] Max depth reached at person23
-```
+``` 
+
+So, this particular path doesn't lead to person55
+We continue exploring and eventually, find these:
+Path: person15 --term18--> person43 --term1--> person55
+Discovered Rule: term18(x,y) ∧ term1(y,z) → term7(x,z)
+(This pattern predicts term7 relationships)
+
+Now the rule can predict:
+If (Alice, term18, Bob) and (Bob, term1, Charlie) exist
+Then (Alice, term7, Charlie) is likely to exist
+Even if we've never seen Alice, Bob, or Charlie before
+
+
 
 #### Rule Discovery
 The algorithm finds several rules, including:
 ```
-*** RULE FOUND *** depth=2, head=term7, body=[term16,term16]
+*** RULE FOUND *** depth=2, head=term7, body=[term18,term1]
 ```
 
-This means: `term16(x,y) ∧ term16(y,z) → term7(x,z)`
+This means: `term18(x,y) ∧ term1(y,z) → term7(x,z)`
 
 ### 4. Rule Quality Assessment
 The miner evaluates each discovered rule using H-scores:
 
 ```
 Found 2 rules for target triplet:
-  Rule 1: term7 -> [term16,term16] (length=2)
-  Rule 2: term7 -> [term0,term16] (length=2)
+  Rule 1: term7 -> [term18,term1] (length=2)
+  Rule 2: term7 -> [term16,term16] (length=2)
 ```
 
 ### 5. Weight Learning Process
